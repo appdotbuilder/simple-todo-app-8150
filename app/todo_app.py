@@ -1,26 +1,26 @@
-from nicegui import ui
-from app.task_service import TaskService
-from app.models import TaskCreate, TaskUpdate
-from typing import Optional
+"""To-Do application UI module."""
+
 import logging
+from nicegui import ui
+
+from app.models import TodoCreate, TodoUpdate
+from app.todo_service import (
+    create_todo,
+    get_all_todos,
+    toggle_todo_completion,
+    delete_todo,
+    update_todo,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class TodoApp:
-    """Main Todo Application UI Component"""
+def create():
+    """Create the To-Do application UI."""
 
-    def __init__(self):
-        self.tasks_container = None
-        self.stats_container = None
-        self.new_task_input = None
-        self.edit_dialog = None
-        self.edit_input = None
-        self.edit_task_id: Optional[int] = None
-
-    def create_ui(self):
-        """Create the main todo application UI"""
-        # Apply modern theme
+    @ui.page("/")
+    def todo_page():
+        # Apply modern theme colors
         ui.colors(
             primary="#2563eb",
             secondary="#64748b",
@@ -31,250 +31,236 @@ class TodoApp:
             info="#3b82f6",
         )
 
-        # Main container with modern styling
-        with ui.column().classes("w-full max-w-4xl mx-auto p-6 bg-gray-50 min-h-screen"):
-            self._create_header()
-            self._create_add_task_form()
-            self._create_stats_section()
-            self._create_task_list()
-            self._create_edit_dialog()
+        # Main container
+        with ui.column().classes("w-full max-w-4xl mx-auto p-6"):
+            # Header
+            ui.label("My To-Do List").classes("text-3xl font-bold text-gray-800 mb-6")
 
-        # Initial load
-        self._refresh_ui()
+            # Add new todo section
+            with ui.card().classes("w-full p-6 mb-6 shadow-lg rounded-xl"):
+                ui.label("Add New Task").classes("text-lg font-semibold text-gray-700 mb-4")
 
-    def _create_header(self):
-        """Create the application header"""
-        with ui.card().classes("w-full p-6 bg-white shadow-lg rounded-xl mb-6"):
-            ui.label("📋 Todo Application").classes("text-3xl font-bold text-gray-800 text-center")
-            ui.label("Organize your tasks efficiently").classes("text-lg text-gray-600 text-center mt-2")
+                with ui.row().classes("w-full gap-4"):
+                    title_input = ui.input(placeholder="Enter task title...").classes("flex-1")
+                    title_input.props("outlined")
 
-    def _create_add_task_form(self):
-        """Create the form to add new tasks"""
-        with ui.card().classes("w-full p-6 bg-white shadow-lg rounded-xl mb-6"):
-            ui.label("Add New Task").classes("text-xl font-semibold text-gray-800 mb-4")
+                with ui.row().classes("w-full gap-4 mt-2"):
+                    description_input = ui.textarea(placeholder="Optional description...").classes("flex-1")
+                    description_input.props("outlined rows=2")
 
-            with ui.row().classes("w-full gap-4"):
-                self.new_task_input = (
-                    ui.input(placeholder="Enter task title...").classes("flex-1").props("outlined clearable")
-                )
+                with ui.row().classes("justify-end mt-4"):
+                    add_button = ui.button("Add Task", icon="add").classes("bg-primary text-white px-6 py-2")
 
-                ui.button("Add Task", on_click=self._add_task, icon="add").classes("bg-primary text-white px-6 py-2")
+            # Todo list container
+            todo_container = ui.column().classes("w-full gap-2")
 
-            # Allow Enter key to submit
-            self.new_task_input.on("keydown.enter", self._add_task)
+        def refresh_todos():
+            """Refresh the todo list display."""
+            todo_container.clear()
+            todos = get_all_todos()
 
-    def _create_stats_section(self):
-        """Create the statistics display"""
-        self.stats_container = ui.row().classes("w-full gap-4 mb-6")
+            if not todos:
+                with todo_container:
+                    with ui.card().classes("w-full p-8 text-center bg-gray-50"):
+                        ui.icon("inbox", size="48px").classes("text-gray-400 mb-4")
+                        ui.label("No tasks yet").classes("text-xl text-gray-500 mb-2")
+                        ui.label("Add your first task above to get started!").classes("text-gray-400")
+                return
 
-    def _create_task_list(self):
-        """Create the task list container"""
-        with ui.card().classes("w-full p-6 bg-white shadow-lg rounded-xl"):
-            ui.label("Your Tasks").classes("text-xl font-semibold text-gray-800 mb-4")
-            self.tasks_container = ui.column().classes("w-full gap-3")
+            # Group todos by status
+            pending_todos = [todo for todo in todos if not todo.completed]
+            completed_todos = [todo for todo in todos if todo.completed]
 
-    def _create_edit_dialog(self):
-        """Create the edit task dialog"""
-        with ui.dialog() as self.edit_dialog, ui.card().classes("w-96"):
-            ui.label("Edit Task").classes("text-xl font-semibold mb-4")
+            with todo_container:
+                # Pending todos section
+                if pending_todos:
+                    ui.label("Pending Tasks").classes("text-lg font-semibold text-gray-700 mb-2 mt-4")
+                    for todo in pending_todos:
+                        create_todo_card(todo)
 
-            self.edit_input = ui.input(label="Task Title").classes("w-full mb-4").props("outlined")
+                # Completed todos section
+                if completed_todos:
+                    ui.label("Completed Tasks").classes("text-lg font-semibold text-gray-700 mb-2 mt-6")
+                    for todo in completed_todos:
+                        create_todo_card(todo)
 
-            with ui.row().classes("w-full gap-2 justify-end"):
-                ui.button("Cancel", on_click=lambda: self.edit_dialog.close() if self.edit_dialog else None).props(
-                    "outline"
-                )
-
-                ui.button("Save", on_click=self._save_edit).classes("bg-primary text-white")
-
-    def _add_task(self):
-        """Add a new task"""
-        if self.new_task_input is None:
-            return
-
-        title = self.new_task_input.value.strip()
-        if not title:
-            ui.notify("Please enter a task title", type="warning")
-            return
-
-        try:
-            task_data = TaskCreate(title=title)
-            TaskService.create_task(task_data)
-            self.new_task_input.value = ""
-            self._refresh_ui()
-            ui.notify("Task added successfully!", type="positive")
-        except Exception as e:
-            logger.error(f"Error adding task: {str(e)}")
-            ui.notify(f"Error adding task: {str(e)}", type="negative")
-
-    def _toggle_task(self, task_id: int):
-        """Toggle task completion status"""
-        try:
-            result = TaskService.toggle_task_completion(task_id)
-            if result:
-                self._refresh_ui()
-                status = "completed" if result.completed else "pending"
-                ui.notify(f"Task marked as {status}", type="positive")
+        def create_todo_card(todo):
+            """Create a card for a single todo item."""
+            card_classes = "w-full p-4 mb-2 shadow-md rounded-lg hover:shadow-lg transition-shadow"
+            if todo.completed:
+                card_classes += " bg-gray-50 border-l-4 border-green-400"
             else:
-                ui.notify("Task not found", type="negative")
-        except Exception as e:
-            logger.error(f"Error updating task: {str(e)}")
-            ui.notify(f"Error updating task: {str(e)}", type="negative")
+                card_classes += " bg-white border-l-4 border-blue-400"
 
-    def _edit_task(self, task_id: int):
-        """Open edit dialog for a task"""
-        task = TaskService.get_task_by_id(task_id)
-        if task is None:
-            ui.notify("Task not found", type="negative")
-            return
+            with ui.card().classes(card_classes):
+                with ui.row().classes("w-full justify-between items-start"):
+                    # Left side - todo content
+                    with ui.column().classes("flex-1"):
+                        title_classes = "text-lg font-medium"
+                        if todo.completed:
+                            title_classes += " line-through text-gray-500"
+                        else:
+                            title_classes += " text-gray-800"
 
-        self.edit_task_id = task_id
-        if self.edit_input:
-            self.edit_input.value = task.title
-        if self.edit_dialog:
-            self.edit_dialog.open()
+                        ui.label(todo.title).classes(title_classes)
 
-    def _save_edit(self):
-        """Save the edited task"""
-        if self.edit_task_id is None or self.edit_input is None:
-            return
+                        if todo.description:
+                            desc_classes = "text-sm mt-1"
+                            if todo.completed:
+                                desc_classes += " text-gray-400"
+                            else:
+                                desc_classes += " text-gray-600"
+                            ui.label(todo.description).classes(desc_classes)
 
-        title = self.edit_input.value.strip()
-        if not title:
-            ui.notify("Please enter a task title", type="warning")
-            return
+                        # Timestamp
+                        time_classes = "text-xs mt-2"
+                        if todo.completed:
+                            time_classes += " text-gray-400"
+                        else:
+                            time_classes += " text-gray-500"
+                        ui.label(f"Created: {todo.created_at.strftime('%Y-%m-%d %H:%M')}").classes(time_classes)
 
-        try:
-            update_data = TaskUpdate(title=title)
-            result = TaskService.update_task(self.edit_task_id, update_data)
-            if result:
-                self._refresh_ui()
-                ui.notify("Task updated successfully!", type="positive")
-                if self.edit_dialog:
-                    self.edit_dialog.close()
-            else:
-                ui.notify("Task not found", type="negative")
-        except Exception as e:
-            logger.error(f"Error updating task: {str(e)}")
-            ui.notify(f"Error updating task: {str(e)}", type="negative")
-        finally:
-            self.edit_task_id = None
+                    # Right side - action buttons
+                    with ui.column().classes("gap-2"):
+                        # Toggle completion button
+                        if todo.completed:
+                            toggle_btn = ui.button(icon="undo", on_click=lambda _, t_id=todo.id: handle_toggle(t_id))
+                            toggle_btn.classes("bg-gray-500 text-white").props("round size=sm")
+                            toggle_btn.tooltip("Mark as incomplete")
+                        else:
+                            toggle_btn = ui.button(icon="check", on_click=lambda _, t_id=todo.id: handle_toggle(t_id))
+                            toggle_btn.classes("bg-green-500 text-white").props("round size=sm")
+                            toggle_btn.tooltip("Mark as complete")
 
-    def _delete_task(self, task_id: int):
-        """Delete a task with confirmation"""
+                        # Edit button
+                        edit_btn = ui.button(icon="edit", on_click=lambda _, t_id=todo.id: handle_edit(t_id))
+                        edit_btn.classes("bg-blue-500 text-white").props("round size=sm")
+                        edit_btn.tooltip("Edit task")
 
-        async def confirm_delete():
-            with ui.dialog() as dialog, ui.card():
-                ui.label("Confirm Delete").classes("text-xl font-semibold mb-4")
-                ui.label("Are you sure you want to delete this task?").classes("mb-4")
+                        # Delete button
+                        delete_btn = ui.button(icon="delete", on_click=lambda _, t_id=todo.id: handle_delete(t_id))
+                        delete_btn.classes("bg-red-500 text-white").props("round size=sm")
+                        delete_btn.tooltip("Delete task")
 
-                with ui.row().classes("gap-2 justify-end"):
-                    ui.button("Cancel", on_click=lambda: dialog.close()).props("outline")
-                    ui.button("Delete", on_click=lambda: dialog.submit(True)).classes("bg-negative text-white")
+        def handle_add():
+            """Handle adding a new todo."""
+            title = title_input.value.strip()
+            if not title:
+                ui.notify("Please enter a task title", type="negative")
+                return
 
-            result = await dialog
-            if result:
-                try:
-                    success = TaskService.delete_task(task_id)
+            try:
+                todo_data = TodoCreate(title=title, description=description_input.value.strip() or None)
+                create_todo(todo_data)
+
+                # Clear inputs
+                title_input.value = ""
+                description_input.value = ""
+
+                # Refresh display
+                refresh_todos()
+                ui.notify("Task added successfully!", type="positive")
+
+            except Exception as e:
+                logger.error(f"Error adding task: {str(e)}")
+                ui.notify(f"Error adding task: {str(e)}", type="negative")
+
+        def handle_toggle(todo_id: int):
+            """Handle toggling todo completion status."""
+            try:
+                result = toggle_todo_completion(todo_id)
+                if result:
+                    refresh_todos()
+                    status = "completed" if result.completed else "marked as pending"
+                    ui.notify(f"Task {status}!", type="positive")
+                else:
+                    ui.notify("Task not found", type="negative")
+            except Exception as e:
+                logger.error(f"Error updating task: {str(e)}")
+                ui.notify(f"Error updating task: {str(e)}", type="negative")
+
+        async def handle_delete(todo_id: int):
+            """Handle deleting a todo with confirmation."""
+            try:
+                with ui.dialog() as delete_dialog, ui.card():
+                    ui.label("Are you sure you want to delete this task?")
+                    with ui.row():
+                        ui.button("Yes", on_click=lambda: delete_dialog.submit("Yes"))
+                        ui.button("No", on_click=lambda: delete_dialog.submit("No"))
+
+                result = await delete_dialog
+                if result == "Yes":
+                    success = delete_todo(todo_id)
                     if success:
-                        self._refresh_ui()
+                        refresh_todos()
                         ui.notify("Task deleted successfully!", type="positive")
                     else:
                         ui.notify("Task not found", type="negative")
-                except Exception as e:
-                    logger.error(f"Error deleting task: {str(e)}")
-                    ui.notify(f"Error deleting task: {str(e)}", type="negative")
+            except Exception as e:
+                logger.error(f"Error deleting task: {str(e)}")
+                ui.notify(f"Error deleting task: {str(e)}", type="negative")
 
-        import asyncio
+        async def handle_edit(todo_id: int):
+            """Handle editing a todo item."""
+            try:
+                # Get current todo
+                from app.todo_service import get_todo
 
-        asyncio.create_task(confirm_delete())
+                current_todo = get_todo(todo_id)
+                if not current_todo:
+                    ui.notify("Task not found", type="negative")
+                    return
 
-    def _refresh_ui(self):
-        """Refresh the entire UI with current data"""
-        self._refresh_stats()
-        self._refresh_tasks()
+                # Create edit dialog
+                with ui.dialog() as dialog, ui.card().classes("w-96 p-6"):
+                    ui.label("Edit Task").classes("text-xl font-bold mb-4")
 
-    def _refresh_stats(self):
-        """Refresh the statistics display"""
-        if self.stats_container is None:
-            return
+                    edit_title = ui.input("Title", value=current_todo.title).classes("w-full mb-4")
+                    edit_title.props("outlined")
 
-        self.stats_container.clear()
-
-        with self.stats_container:
-            stats = TaskService.get_task_stats()
-
-            # Total tasks card
-            with ui.card().classes("p-4 bg-blue-50 border border-blue-200 rounded-lg flex-1"):
-                ui.label("Total Tasks").classes("text-sm text-gray-600 uppercase")
-                ui.label(str(stats["total"])).classes("text-2xl font-bold text-blue-600 mt-1")
-
-            # Completed tasks card
-            with ui.card().classes("p-4 bg-green-50 border border-green-200 rounded-lg flex-1"):
-                ui.label("Completed").classes("text-sm text-gray-600 uppercase")
-                ui.label(str(stats["completed"])).classes("text-2xl font-bold text-green-600 mt-1")
-
-            # Pending tasks card
-            with ui.card().classes("p-4 bg-orange-50 border border-orange-200 rounded-lg flex-1"):
-                ui.label("Pending").classes("text-sm text-gray-600 uppercase")
-                ui.label(str(stats["pending"])).classes("text-2xl font-bold text-orange-600 mt-1")
-
-    def _refresh_tasks(self):
-        """Refresh the task list display"""
-        if self.tasks_container is None:
-            return
-
-        self.tasks_container.clear()
-
-        with self.tasks_container:
-            tasks = TaskService.get_all_tasks()
-
-            if not tasks:
-                with ui.card().classes("p-6 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center"):
-                    ui.icon("assignment").classes("text-4xl text-gray-400 mb-2")
-                    ui.label("No tasks yet").classes("text-xl text-gray-500 font-medium")
-                    ui.label("Add your first task above to get started!").classes("text-gray-400")
-                return
-
-            for task in tasks:
-                self._create_task_item(task)
-
-    def _create_task_item(self, task):
-        """Create a single task item in the list"""
-        if task.id is None:
-            return
-
-        task_id = task.id
-        completed_class = "bg-green-50 border-green-200" if task.completed else "bg-white border-gray-200"
-        text_class = "line-through text-gray-500" if task.completed else "text-gray-800"
-
-        with ui.card().classes(f"p-4 {completed_class} border rounded-lg"):
-            with ui.row().classes("w-full items-center gap-4"):
-                # Completion checkbox
-                ui.checkbox(value=task.completed, on_change=lambda: self._toggle_task(task_id)).classes("text-primary")
-
-                # Task title
-                ui.label(task.title).classes(f"flex-1 text-lg {text_class}")
-
-                # Created date
-                created_date = task.created_at.strftime("%m/%d %H:%M")
-                ui.label(created_date).classes("text-sm text-gray-400")
-
-                # Action buttons
-                with ui.row().classes("gap-1"):
-                    ui.button(icon="edit", on_click=lambda: self._edit_task(task_id)).classes("p-2").props(
-                        "flat round size=sm color=primary"
+                    edit_description = ui.textarea("Description", value=current_todo.description or "").classes(
+                        "w-full mb-4"
                     )
+                    edit_description.props("outlined rows=3")
 
-                    ui.button(icon="delete", on_click=lambda: self._delete_task(task_id)).classes("p-2").props(
-                        "flat round size=sm color=negative"
-                    )
+                    save_clicked = False
 
+                    def on_save():
+                        nonlocal save_clicked
+                        save_clicked = True
+                        dialog.close()
 
-def create():
-    """Create and register the todo application"""
+                    with ui.row().classes("gap-2 justify-end"):
+                        ui.button("Cancel", on_click=dialog.close).props("outline")
+                        ui.button("Save", on_click=on_save).classes("bg-primary text-white")
 
-    @ui.page("/")
-    def todo_page():
-        app = TodoApp()
-        app.create_ui()
+                dialog.open()
+                await dialog
+
+                if save_clicked:
+                    new_title = edit_title.value.strip()
+                    if not new_title:
+                        ui.notify("Title cannot be empty", type="negative")
+                        return
+
+                    update_data = TodoUpdate(title=new_title, description=edit_description.value.strip() or None)
+
+                    updated_todo = update_todo(todo_id, update_data)
+                    if updated_todo:
+                        refresh_todos()
+                        ui.notify("Task updated successfully!", type="positive")
+                    else:
+                        ui.notify("Error updating task", type="negative")
+
+            except Exception as e:
+                logger.error(f"Error editing task: {str(e)}")
+                ui.notify(f"Error editing task: {str(e)}", type="negative")
+
+        # Wire up the add button
+        add_button.on_click(handle_add)
+
+        # Allow Enter key in title input to add todo
+        title_input.on("keydown.enter", lambda _: handle_add())
+
+        # Initial load
+        refresh_todos()

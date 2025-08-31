@@ -5,6 +5,4 @@ import app.todo_app
 def startup() -> None:
     # this function is called before the first request
     create_tables()
-
-    # Register todo application
     app.todo_app.create()
